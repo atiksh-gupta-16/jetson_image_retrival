@@ -1,0 +1,22 @@
+# API backend
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9        # required for FastAPI file uploads
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+
+# Vector store
+chromadb>=0.5.0
+
+# CLIP embeddings
+transformers>=4.41.0
+torch>=2.3.0
+Pillow>=10.3.0
+
+# Chatbot frontend
+streamlit>=1.35.0
+requests>=2.32.0
+
+# Dev / test
+pytest>=8.2.0
+httpx>=0.27.0                  # for FastAPI TestClient

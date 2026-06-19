@@ -68,6 +68,16 @@ python scripts/send_alert.py \
     --location "Front Gate"
 ```
 
+### 6. Test the bulk ingest script with dummy data
+
+Use the fixture tree under `data/sample_alerts/` to verify camera-folder discovery and request construction before sending real images:
+
+```bash
+python scripts/bulk_ingest.py --alerts-dir ./data/sample_alerts --dry-run
+```
+
+If you want to exercise the real upload path, replace the placeholder `.jpg` files in `data/sample_alerts/` with valid images and point `--api-url` at a running backend.
+
 ---
 
 ## Docker

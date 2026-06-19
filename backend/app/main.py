@@ -12,6 +12,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.logging import get_logger, setup_logging
 from backend.app.repositories.vector_store import get_vector_store
 
+
 logger = get_logger(__name__)
 
 

@@ -74,6 +74,34 @@ def _format_ts(ts: str) -> str:
         return ts
 
 
+def _render_results(results: List[Dict[str, Any]]) -> None:
+    if not results:
+        st.info("No matching alerts found.")
+        return
+
+    cols_per_row = 3
+    for i in range(0, len(results), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j, item in enumerate(results[i : i + cols_per_row]):
+            with cols[j]:
+                b64 = item.get("image_b64", "")
+                if b64:
+                    st.image(
+                        f"data:image/jpeg;base64,{b64}",
+                        use_column_width=True,
+                        caption=f"Rank #{item['rank']} · score {item['score']:.3f}",
+                    )
+                else:
+                    st.warning("Image not available")
+
+                st.caption(
+                    f"📷 **{item['camera_id']}**  \n"
+                    f"🕐 {_format_ts(item['timestamp'])}  \n"
+                    + (f"🏷 {item['alert_type']}  \n" if item.get("alert_type") else "")
+                    + (f"🎯 confidence {item['confidence']:.2f}" if item.get("confidence") is not None and item['confidence'] >= 0 else "")
+                )
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -124,38 +152,14 @@ for msg in st.session_state.messages:
             _render_results(msg["results"])
 
 
-def _render_results(results: List[Dict[str, Any]]) -> None:
-    if not results:
-        st.info("No matching alerts found.")
-        return
-
-    cols_per_row = 3
-    for i in range(0, len(results), cols_per_row):
-        cols = st.columns(cols_per_row)
-        for j, item in enumerate(results[i : i + cols_per_row]):
-            with cols[j]:
-                b64 = item.get("image_b64", "")
-                if b64:
-                    st.image(
-                        f"data:image/jpeg;base64,{b64}",
-                        use_column_width=True,
-                        caption=f"Rank #{item['rank']} · score {item['score']:.3f}",
-                    )
-                else:
-                    st.warning("Image not available")
-
-                st.caption(
-                    f"📷 **{item['camera_id']}**  \n"
-                    f"🕐 {_format_ts(item['timestamp'])}  \n"
-                    + (f"🏷 {item['alert_type']}  \n" if item.get("alert_type") else "")
-                    + (f"🎯 confidence {item['confidence']:.2f}" if item.get("confidence") is not None and item['confidence'] >= 0 else "")
-                )
-
-
 # Chat input
+if stats is None:
+    st.info("Backend is offline. You can still type a query, but search will fail until the API is reachable.")
+elif stats.get("total_alerts", 0) == 0:
+    st.info("No alerts are indexed yet. You can still type a query now and search once data is ingested.")
+
 user_query = st.chat_input(
     "Describe what you're looking for…",
-    disabled=(stats is None or stats.get("total_alerts", 0) == 0),
 )
 
 if user_query:

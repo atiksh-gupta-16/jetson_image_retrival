@@ -1,0 +1,38 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+
+# Streamlit
+.streamlit/
+
+# Build artifacts
+build/
+dist/
+
+# Chroma database
+data/chroma/
+
+# Images
+data/images/
+
+# Node
+node_modules/
+
+# Logs
+*.log

@@ -70,7 +70,18 @@ def search_alerts(
     # 3. Fetch from vector store (fetch extra so we can post-filter)
     fetch_k = min(k * 4, cfg.MAX_TOP_K * 4)
     raw = vector_store.query(query_embedding=query_vector, top_k=fetch_k, where=where)
+    logger.info("=" * 70)
+    logger.info("Query: %s", query)
 
+    for meta, score in raw:
+        logger.info(
+            "%.4f | camera=%s | label=%s",
+            score,
+            meta.get("camera_id"),
+            meta.get("label"),
+        )
+
+    logger.info("=" * 70)
     # 4. Build results
     results: List[SearchResult] = []
     rank = 1
@@ -98,7 +109,6 @@ def search_alerts(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _meta_to_record(meta: dict) -> AlertRecord:
     extra_raw = meta.get("extra", "{}")
     try:

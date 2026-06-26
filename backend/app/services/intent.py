@@ -52,11 +52,12 @@ def _load_llm() -> ChatOllama:
         logger.info("Loading Ollama LLM: model=%s", cfg.LLM_MODEL_NAME)
         _llm = ChatOllama(
             model=cfg.LLM_MODEL_NAME,
+            base_url=cfg.OLLAMA_BASE_URL,
             temperature=cfg.LLM_TEMPERATURE,
             num_predict=cfg.LLM_MAX_TOKENS,
             format="json",          # Ollama native JSON mode — forces valid JSON output
         )
-        logger.info("Ollama LLM ready.")
+        logger.info("Ollama LLM ready with base_url=%s.", cfg.OLLAMA_BASE_URL)
     return _llm
 
 
@@ -117,6 +118,11 @@ def _build_chain():
     )
 
     system_template = _load_system_prompt()
+    # Escape literal braces for LangChain's f-string parsing, keeping actual template variables
+    system_template = system_template.replace("{", "{{").replace("}", "}}")
+    system_template = system_template.replace("{{format_instructions}}", "{format_instructions}")
+    system_template = system_template.replace("{{today}}", "{today}")
+    system_template = system_template.replace("{{yesterday}}", "{yesterday}")
 
     prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(

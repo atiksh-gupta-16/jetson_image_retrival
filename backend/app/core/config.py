@@ -55,12 +55,13 @@ class Settings(BaseSettings):
     # # ── Query Understanding ───────────────────────────────────────────────
 
     LLM_MODEL_NAME: str = "qwen2.5:1.5b"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     LLM_TEMPERATURE: float = 0.0
 
     LLM_MAX_TOKENS: int = 256
 
-    QUERY_PROMPT_PATH: Path = Path("Imagify\\backend\\app\\prompts\\query_parser.txt")
+    QUERY_PROMPT_PATH: Path = Path("backend/app/prompts/query_parser.txt")
 
 
 @lru_cache(maxsize=1)

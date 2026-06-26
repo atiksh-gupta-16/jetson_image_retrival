@@ -80,6 +80,19 @@ def run_query(
     cfg = get_settings()
     k = top_k or cfg.DEFAULT_TOP_K
 
+    # ── Step 0: Check for basic greetings ─────────────────────────────────────
+    clean_query = query.lower().strip().rstrip("?.!")
+    greetings = {"hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "howdy", "whats up", "yo"}
+    is_greet = clean_query in greetings or any(clean_query.startswith(g + " ") for g in greetings)
+    if is_greet:
+        logger.info("Query %r identified as greeting. Skipping search/retrieval.", query)
+        from backend.app.models.intent import IntentFilter
+        return HybridQueryResult(
+            results=[],
+            intent=IntentFilter(semantic_query=""),
+            where_clause=None
+        )
+
     # ── Step 1: Intent extraction ─────────────────────────────────────────────
     intent = extract_intent(query)
     logger.info("Intent: %r", intent)
@@ -138,11 +151,10 @@ def _build_where_clause(intent: IntentFilter) -> Optional[Dict[str, Any]]:
     if intent.camera_id:
         conditions.append({"camera_id": {"$eq": intent.camera_id}})
 
-    if intent.label:
-        conditions.append({"label": {"$eq": intent.label}})
-
-    if intent.alert_type:
-        conditions.append({"alert_type": {"$eq": intent.alert_type}})
+    # Both intent.label (e.g., 'person') and intent.alert_type (e.g., 'motion') map to Chroma's alert_type metadata field
+    target_alert_type = intent.label or intent.alert_type
+    if target_alert_type:
+        conditions.append({"alert_type": {"$eq": target_alert_type}})
 
     if intent.min_confidence is not None:
         conditions.append({"confidence": {"$gte": intent.min_confidence}})

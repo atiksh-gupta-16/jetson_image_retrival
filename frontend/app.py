@@ -148,7 +148,7 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg.get("results"):
+        if msg.get("results") is not None:
             _render_results(msg["results"])
 
 
@@ -182,18 +182,29 @@ if user_query:
         if data is not None:
             results = data.get("results", [])
             total = data.get("total", 0)
-            reply = (
-                f"Found **{total}** alert{'s' if total != 1 else ''} matching *\"{user_query}\"*."
-                if total > 0
-                else f"No alerts matched *\"{user_query}\"*. Try broader terms or lower the similarity threshold."
-            )
+            
+            clean_q = user_query.lower().strip().rstrip("?.!")
+            greetings = {"hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "howdy", "whats up", "yo"}
+            is_greet = clean_q in greetings or any(clean_q.startswith(g + " ") for g in greetings)
+            
+            if is_greet:
+                reply = "Hello! 👋 How can I help you search your alert footage today? Try describing something, like *'person in red'* or *'vehicles near gate'*."
+                results_to_show = None
+            else:
+                reply = (
+                    f"Found **{total}** alert{'s' if total != 1 else ''} matching *\"{user_query}\"*."
+                    if total > 0
+                    else f"No alerts matched *\"{user_query}\"*. Try broader terms or lower the similarity threshold."
+                )
+                results_to_show = results
             st.markdown(reply)
-            _render_results(results)
+            if results_to_show is not None:
+                _render_results(results_to_show)
 
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": reply,
-                "results": results,
+                "results": results_to_show,
             })
         else:
             st.session_state.messages.append({

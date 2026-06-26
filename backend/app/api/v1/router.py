@@ -4,7 +4,7 @@ FastAPI v1 router.
 Endpoints
 ---------
 POST   /api/v1/ingest         Push one alert image + metadata from Jetson
-POST   /api/v1/search         Semantic search by text query
+POST   /api/v1/search         Hybrid RAG search (LLM intent + CLIP similarity)
 GET    /api/v1/collections    Collection stats (total alerts, camera list)
 DELETE /api/v1/alerts/{id}    Remove a specific alert
 GET    /api/v1/health         Liveness probe
@@ -19,7 +19,13 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from backend.app.core.config import get_settings
-from backend.app.core.exceptions import EmbeddingError, IngestError, RetrievalError
+from backend.app.core.exceptions import (
+    EmbeddingError,
+    IngestError,
+    IntentExtractionError,
+    QueryPipelineError,
+    RetrievalError,
+)
 from backend.app.core.logging import get_logger
 from backend.app.repositories.vector_store import VectorStoreRepository, get_vector_store
 from backend.app.schemas.alert import (
@@ -32,7 +38,7 @@ from backend.app.schemas.alert import (
 )
 from backend.app.services.ingest import ingest_alert
 from backend.app.services.rag import index_record
-from backend.app.services.retrieval import search_alerts
+from backend.app.services.query_pipeline import run_query  # ← replaces direct search_alerts
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -65,7 +71,6 @@ async def ingest_endpoint(
         description="Any additional metadata as a JSON object string",
     ),
 ) -> IngestResponse:
-    # Parse optional extra metadata
     extra: dict = {}
     if extra_json:
         try:
@@ -76,7 +81,6 @@ async def ingest_endpoint(
                 detail=f"extra_json is not valid JSON: {exc}",
             )
 
-    # Read image bytes
     image_bytes = await image.read()
     if not image_bytes:
         raise HTTPException(
@@ -84,7 +88,6 @@ async def ingest_endpoint(
             detail="Empty image upload.",
         )
 
-    # Ingest (validate + save to disk)
     try:
         record = ingest_alert(
             image_bytes=image_bytes,
@@ -99,7 +102,6 @@ async def ingest_endpoint(
     except IngestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    # Embed + store in Chroma
     try:
         index_record(record, vector_store)
     except EmbeddingError as exc:
@@ -124,10 +126,12 @@ async def ingest_endpoint(
 @router.post(
     "/search",
     response_model=SearchResponse,
-    summary="Semantic image search by natural-language query",
+    summary="Hybrid RAG search by natural-language query",
     description=(
-        "Embeds the query with CLIP text encoder, finds the nearest image vectors "
-        "in Chroma, and returns matching alerts with base64-encoded images."
+        "The query is parsed by a local LLM to extract structured filters "
+        "(camera, label, time range). Those filters narrow the Chroma candidate "
+        "set before CLIP similarity re-ranks the results. "
+        "Example: 'Show persons from camera 2 after 3 PM'."
     ),
 )
 async def search_endpoint(
@@ -135,19 +139,33 @@ async def search_endpoint(
     vector_store: VSDep,
 ) -> SearchResponse:
     try:
-        results = search_alerts(
+        pipeline_result = run_query(
             query=body.query,
             vector_store=vector_store,
             top_k=body.top_k,
-            camera_id=body.camera_id,
-            alert_type=body.alert_type,
             min_score=body.min_score,
         )
-    except RetrievalError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    except IntentExtractionError as exc:
+        # LLM failed to load (hard failure — model file missing, OOM, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Intent extraction unavailable: {exc}",
+        )
+    except (QueryPipelineError, RetrievalError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
     except Exception as exc:
         logger.exception("Unexpected search error")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        )
+
+    results = pipeline_result.results
+    intent  = pipeline_result.intent
 
     items = [
         AlertResultItem(
@@ -166,7 +184,15 @@ async def search_endpoint(
         for r in results
     ]
 
-    return SearchResponse(query=body.query, total=len(items), results=items)
+    return SearchResponse(
+        query=body.query,
+        total=len(items),
+        results=items,
+        # surface the extracted filters so clients/UI can show
+        # "Searching camera 2 · label: person · after 15:00"
+        applied_filters=intent.model_dump(exclude_none=True, exclude={"semantic_query"}),
+        semantic_query=intent.semantic_query,
+    )
 
 
 # ── Collection stats ──────────────────────────────────────────────────────────

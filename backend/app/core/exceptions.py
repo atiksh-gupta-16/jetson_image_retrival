@@ -1,14 +1,34 @@
+"""
+Application-wide custom exceptions.
+
+Each service raises its own exception type so callers can handle
+failures at the right granularity.
+"""
+
+
 class ImagifyError(Exception):
-    """Base exception."""
+    """Base exception for the Imagify application."""
+
 
 class IngestError(ImagifyError):
-    """Image upload / ingestion failed."""
+    """Raised when image validation, upload, or ingestion fails."""
+
 
 class EmbeddingError(ImagifyError):
-    """CLIP embedding failed."""
+    """Raised when CLIP embedding generation fails."""
+
 
 class VectorStoreError(ImagifyError):
-    """Chroma operation failed."""
+    """Raised when a ChromaDB operation fails."""
+
 
 class RetrievalError(ImagifyError):
-    """Search query failed."""
+    """Raised when semantic retrieval fails."""
+
+
+class IntentExtractionError(ImagifyError):
+    """Raised when the intent extractor cannot extract a valid intent."""
+
+
+class QueryPipelineError(ImagifyError):
+    """Raised when the complete query pipeline fails."""

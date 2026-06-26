@@ -4,6 +4,13 @@ Retrieval service.
 Takes a natural-language query, embeds it with CLIP, queries Chroma,
 and returns SearchResult objects that include the base64-encoded image
 so the Streamlit UI can render them directly.
+
+Change from original
+--------------------
+`search_alerts` now accepts an optional `where` parameter (a pre-built
+Chroma filter dict).  When supplied by query_pipeline.py it takes
+precedence over the legacy `camera_id` / `alert_type` keyword arguments,
+which are kept for backwards compatibility.
 """
 
 from __future__ import annotations
@@ -12,7 +19,7 @@ import base64
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.app.core.config import get_settings
 from backend.app.core.exceptions import RetrievalError
@@ -31,6 +38,9 @@ def search_alerts(
     camera_id: Optional[str] = None,
     alert_type: Optional[str] = None,
     min_score: float = 0.0,
+    # ── NEW ────────────────────────────────────────────────────────────────
+    where: Optional[Dict[str, Any]] = None,
+    # ── END NEW ────────────────────────────────────────────────────────────
 ) -> List[SearchResult]:
     """
     Semantic search over indexed alert images.
@@ -40,9 +50,14 @@ def search_alerts(
     query:        Natural-language description, e.g. "person in red jacket".
     vector_store: Injected repository.
     top_k:        Max results (falls back to DEFAULT_TOP_K from config).
-    camera_id:    Optional filter — only return alerts from this camera.
-    alert_type:   Optional filter — only return alerts of this type.
+    camera_id:    Legacy filter — only return alerts from this camera.
+                  Ignored when `where` is supplied.
+    alert_type:   Legacy filter — only return alerts of this type.
+                  Applied as Python post-filter when `where` is supplied.
     min_score:    Cosine similarity threshold in [0, 1].
+    where:        Pre-built Chroma where-clause dict (from query_pipeline.py).
+                  When present, `camera_id` is not used for the Chroma query;
+                  all metadata filtering has already been encoded in `where`.
 
     Returns
     -------
@@ -55,24 +70,34 @@ def search_alerts(
     if not query.strip():
         raise RetrievalError("Query must not be empty.")
 
-    logger.info("Search | query=%r | top_k=%d | camera=%s", query, k, camera_id or "*")
+    logger.info(
+        "Search | query=%r | top_k=%d | where=%s | camera=%s",
+        query,
+        k,
+        where,
+        camera_id or "*",
+    )
 
     # 1. Embed the query
     query_vector = embed_text(query)
 
-    # 2. Build optional Chroma where-filter
-    # Chroma only supports a single field in $and / $or when using the default
-    # hnsw index, so we apply secondary filters in Python.
-    where = None
-    if camera_id:
-        where = {"camera_id": camera_id}
+    # 2. Resolve the Chroma where-clause.
+    #    `where` from query_pipeline.py takes precedence.
+    #    Fall back to the legacy single-field filter for direct callers.
+    chroma_where = where
+    if chroma_where is None and camera_id:
+        chroma_where = {"camera_id": camera_id}
 
-    # 3. Fetch from vector store (fetch extra so we can post-filter)
+    # 3. Fetch from vector store (over-fetch to allow post-filtering)
     fetch_k = min(k * 4, cfg.MAX_TOP_K * 4)
-    raw = vector_store.query(query_embedding=query_vector, top_k=fetch_k, where=where)
+    raw = vector_store.query(
+        query_embedding=query_vector,
+        top_k=fetch_k,
+        where=chroma_where,
+    )
+
     logger.info("=" * 70)
     logger.info("Query: %s", query)
-
     for meta, score in raw:
         logger.info(
             "%.4f | camera=%s | label=%s",
@@ -80,9 +105,9 @@ def search_alerts(
             meta.get("camera_id"),
             meta.get("label"),
         )
-
     logger.info("=" * 70)
-    # 4. Build results
+
+    # 4. Build results with optional Python-side secondary filters
     results: List[SearchResult] = []
     rank = 1
 
@@ -90,7 +115,8 @@ def search_alerts(
         if score < min_score:
             continue
 
-        # Secondary filter: alert_type
+        # Secondary filter: alert_type (not always expressible in the where-
+        # clause when combined with other $and conditions)
         if alert_type and meta.get("alert_type", "") != alert_type:
             continue
 
@@ -109,6 +135,7 @@ def search_alerts(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 def _meta_to_record(meta: dict) -> AlertRecord:
     extra_raw = meta.get("extra", "{}")
     try:

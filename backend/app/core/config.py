@@ -7,7 +7,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,9 +29,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # ── Storage ───────────────────────────────────────────────────────────────
-    # Where alert images are saved on disk after upload
     IMAGE_STORE_DIR: Path = Path("./data/images")
-    # Where Chroma persists its vector index
     CHROMA_PERSIST_DIR: Path = Path("./data/chroma")
     CHROMA_COLLECTION_NAME: str = "imagify_alerts"
 
@@ -49,6 +46,21 @@ class Settings(BaseSettings):
     # ── Retrieval ─────────────────────────────────────────────────────────────
     DEFAULT_TOP_K: int = 10
     MAX_TOP_K: int = 50
+
+    # ── LLM (intent extraction) ───────────────────────────────────────────────
+    # Point at any GGUF model file on disk, e.g. Mistral-7B-Instruct.
+    # The model is loaded once as a singleton; see services/intent.py.
+    # LLM_MODEL_PATH: Path = Path("./models/mistral-7b-instruct-v0.2.Q4_K_M.gguf")
+    # LLM_GPU_LAYERS: int = 0    # 0 = CPU-only; set to 32+ to offload layers to GPU
+    # # ── Query Understanding ───────────────────────────────────────────────
+
+    LLM_MODEL_NAME: str = "qwen2.5:1.5b"
+
+    LLM_TEMPERATURE: float = 0.0
+
+    LLM_MAX_TOKENS: int = 256
+
+    QUERY_PROMPT_PATH: Path = Path("Imagify\\backend\\app\\prompts\\query_parser.txt")
 
 
 @lru_cache(maxsize=1)

@@ -121,7 +121,7 @@ def search_alerts(
             continue
 
         record = _meta_to_record(meta)
-        image_b64 = _load_image_b64(record.image_path)
+        image_b64 = _load_image_b64(record)
 
         results.append(
             SearchResult(record=record, score=round(score, 4), rank=rank, image_b64=image_b64)
@@ -160,14 +160,20 @@ def _meta_to_record(meta: dict) -> AlertRecord:
     )
 
 
-def _load_image_b64(image_path: str) -> str:
+def _load_image_b64(record: AlertRecord) -> str:
     """Read image bytes from disk and return base64-encoded string."""
-    path = Path(image_path)
+    cfg = get_settings()
+    # Try dynamic relative path first (in case it was moved/docker)
+    path = cfg.IMAGE_STORE_DIR / record.camera_id / record.image_filename
     if not path.exists():
-        logger.warning("Image file not found: %s", image_path)
+        # Fall back to the absolute path stored in DB
+        path = Path(record.image_path)
+        
+    if not path.exists():
+        logger.warning("Image file not found: %s", record.image_path)
         return ""
     try:
         return base64.b64encode(path.read_bytes()).decode("utf-8")
     except Exception as exc:
-        logger.error("Cannot read image %s: %s", image_path, exc)
+        logger.error("Cannot read image %s: %s", path, exc)
         return ""

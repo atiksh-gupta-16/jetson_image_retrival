@@ -9,15 +9,17 @@ from unittest.mock import MagicMock, patch
 
 @pytest.fixture
 def client():
-    # Patch vector store so tests don't need Chroma on disk
+    from backend.app.main import app
+    from backend.app.repositories.vector_store import get_vector_store
+
     mock_vs = MagicMock()
     mock_vs.count.return_value = 0
     mock_vs.list_cameras.return_value = []
 
-    with patch("backend.app.repositories.vector_store.get_vector_store", return_value=mock_vs):
-        from backend.app.main import app
-        with TestClient(app) as c:
-            yield c
+    app.dependency_overrides[get_vector_store] = lambda: mock_vs
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 def test_health(client):

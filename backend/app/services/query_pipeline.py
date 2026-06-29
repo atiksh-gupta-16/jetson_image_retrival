@@ -151,10 +151,8 @@ def _build_where_clause(intent: IntentFilter) -> Optional[Dict[str, Any]]:
     if intent.camera_id:
         conditions.append({"camera_id": {"$eq": intent.camera_id}})
 
-    # Both intent.label (e.g., 'person') and intent.alert_type (e.g., 'motion') map to Chroma's alert_type metadata field
-    target_alert_type = intent.label or intent.alert_type
-    if target_alert_type:
-        conditions.append({"alert_type": {"$eq": target_alert_type}})
+    if intent.alert_type:
+        conditions.append({"alert_type": {"$eq": intent.alert_type}})
 
     if intent.min_confidence is not None:
         conditions.append({"confidence": {"$gte": intent.min_confidence}})

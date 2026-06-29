@@ -1,28 +1,39 @@
-# Imagify 🎥
+# Imagify 🎥 - Semantic Image Search & Highlighting
 
-Semantic image search for Jetson alert footage.
+Semantic image search for Jetson alert footage with intelligent region highlighting.
 
-Your Jetson device pushes alert images to the API. Imagify embeds them with CLIP and stores the vectors in Chroma. You then search the footage in plain English — *"person near the gate at night"*, *"vehicle on camera 3"* — and get matching images back.
+Your Jetson device pushes alert images to the API. Imagify embeds them with OpenAI's CLIP model and stores the vectors in ChromaDB. You can then search the footage in plain English — *"red shirt guy"*, *"vehicle on camera 3"* — and the system not only retrieves the matching images but automatically draws a bounding box around the exact region of the image that matches your query.
 
 ---
 
-## Architecture
+## How It Works (The Pipeline Explained)
 
-```
-Jetson device
-    │
-    │  POST /api/v1/ingest  (image + camera_id + timestamp + optional metadata)
-    ▼
-FastAPI backend
-    ├── services/ingest.py    validate + save image to disk
-    ├── services/rag.py       CLIP-embed the image, upsert into Chroma
-    └── repositories/         Chroma vector store
-    │
-    │  POST /api/v1/search  (text query → base64 images + metadata)
-    ▼
-Streamlit chatbot UI
-    └── frontend/app.py       type a query, see matching alert images
-```
+### 1. Ingestion (Storing Images)
+- **Tool**: `backend/app/services/ingest.py` & `backend/app/services/rag.py`
+- When a Jetson device sends an image to the `/api/v1/ingest` endpoint, it is first saved to disk.
+- Then, the entire image is passed to **OpenAI's CLIP Model** (`openai/clip-vit-base-patch32` loaded via the `transformers` library in `rag.py`).
+- CLIP generates a mathematical representation (a high-dimensional vector) of the visual contents of the image.
+- This vector, along with metadata (camera ID, timestamp, disk path), is stored in **ChromaDB** (a local vector database).
+
+### 2. Search & Intent Extraction
+- **Tool**: `backend/app/services/intent.py` & `backend/app/services/query_pipeline.py`
+- When you type a query like *"red shirt guy"* in the Streamlit UI, the query first goes to a local **Ollama LLM** (`qwen2.5:1.5b`).
+- The LLM parses the sentence to extract structured filters (e.g., if you said "camera 2", it sets `camera_id="2"`). It also isolates the pure semantic query (e.g., "red shirt guy").
+- The pipeline then passes this parsed intent to the retrieval engine.
+
+### 3. Semantic Image Retrieval
+- **Tool**: `backend/app/services/retrieval.py` & `backend/app/services/rag.py`
+- The semantic query ("red shirt guy") is passed through the same **CLIP Model** to generate a text embedding vector.
+- The system queries **ChromaDB** to find image vectors that are mathematically closest (highest cosine similarity) to the text vector.
+- This quickly filters down the thousands of images to the top matching ones that conceptually resemble the text description.
+
+### 4. Intelligent Region Highlighting (Drawing the Box)
+- **Tool**: `backend/app/services/highlight.py`
+- Once the top images are retrieved, they are passed to the highlight service.
+- The service uses a **sliding window approach**: it generates overlapping "crops" (sub-regions) of the image at different sizes (25%, 35%, 50% of the image size).
+- Every single crop is passed through the **CLIP Model** and scored against your text query ("red shirt guy").
+- The crop with the highest similarity score is identified as the exact location of the object/person you asked for.
+- A **green bounding box** is then drawn around this highest-scoring crop using the `Pillow` (PIL) library before returning the image to the frontend.
 
 ---
 
@@ -57,27 +68,6 @@ streamlit run frontend/app.py
 # → http://localhost:8501
 ```
 
-### 5. Push a test alert (from your Jetson or locally)
-
-```bash
-python scripts/send_alert.py \
-    --image /path/to/alert.jpg \
-    --camera-id "cam-01" \
-    --alert-type "person" \
-    --confidence 0.92 \
-    --location "Front Gate"
-```
-
-### 6. Test the bulk ingest script with dummy data
-
-Use the fixture tree under `data/sample_alerts/` to verify camera-folder discovery and request construction before sending real images:
-
-```bash
-python scripts/bulk_ingest.py --alerts-dir ./data/sample_alerts --dry-run
-```
-
-If you want to exercise the real upload path, replace the placeholder `.jpg` files in `data/sample_alerts/` with valid images and point `--api-url` at a running backend.
-
 ---
 
 ## Docker
@@ -101,18 +91,6 @@ docker-compose up --build
 | `GET`  | `/api/v1/health` | Liveness probe |
 
 Full interactive docs at `/docs` when the API is running.
-
-### Ingest payload (multipart/form-data)
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `image` | file | ✅ | Alert image (JPEG, PNG, BMP, WEBP, TIFF) |
-| `camera_id` | string | ✅ | Camera / device identifier |
-| `timestamp` | ISO-8601 datetime | ✅ | Alert time from the device |
-| `alert_type` | string | ❌ | e.g. `motion`, `person`, `vehicle` |
-| `confidence` | float 0–1 | ❌ | Detection confidence |
-| `location_label` | string | ❌ | Human-readable camera location |
-| `extra_json` | JSON string | ❌ | Any additional metadata |
 
 ### Jetson integration (Python)
 
@@ -144,8 +122,9 @@ Imagify/
 │   ├── services/
 │   │   ├── ingest.py           save image to disk, build AlertRecord
 │   │   ├── rag.py              CLIP embedding + index into Chroma
-│   │   └── retrieval.py        text query → ranked image results
-│   ├── prompts/                LLM caption templates (optional enrichment)
+│   │   ├── retrieval.py        text query → ranked image results
+│   │   └── highlight.py        CLIP-guided bounding box highlighting
+│   ├── prompts/                LLM caption templates
 │   ├── utils/                  shared helpers
 │   └── main.py                 FastAPI app factory
 ├── frontend/app.py             Streamlit chatbot UI
@@ -155,12 +134,3 @@ Imagify/
 ├── docker-compose.yml
 └── requirements.txt
 ```
-
----
-
-## Extending later
-
-- **LLM captions** — enable `OLLAMA_ENABLED=true` + run LLaVA locally to auto-caption each image on ingest, giving richer text metadata for search.
-- **Larger CLIP** — swap `CLIP_MODEL_NAME` to `openai/clip-vit-large-patch14` for better accuracy.
-- **GPU** — set `EMBEDDING_DEVICE=cuda` on any NVIDIA machine.
-- **More metadata** — add fields to `AlertRecord` and include them in the ingest form. No schema migrations needed; Chroma stores them as arbitrary metadata.

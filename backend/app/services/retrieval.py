@@ -27,6 +27,7 @@ from backend.app.core.logging import get_logger
 from backend.app.models.alert import AlertRecord, SearchResult
 from backend.app.repositories.vector_store import VectorStoreRepository
 from backend.app.services.rag import embed_text
+from backend.app.services.highlight import highlight_image_b64
 
 logger = get_logger(__name__)
 
@@ -123,8 +124,11 @@ def search_alerts(
         record = _meta_to_record(meta)
         image_b64 = _load_image_b64(record)
 
+        # Attempt to highlight the matching region in the image
+        highlighted_b64 = _try_highlight(record, query)
+
         results.append(
-            SearchResult(record=record, score=round(score, 4), rank=rank, image_b64=image_b64)
+            SearchResult(record=record, score=round(score, 4), rank=rank, image_b64=highlighted_b64 or image_b64)
         )
         rank += 1
         if rank > k:
@@ -158,6 +162,26 @@ def _meta_to_record(meta: dict) -> AlertRecord:
         extra=extra,
         indexed_at=datetime.fromisoformat(meta["indexed_at"]),
     )
+
+
+def _try_highlight(record: AlertRecord, query: str) -> Optional[str]:
+    """
+    Attempt to highlight the matching region in the image.
+    Returns base64-encoded highlighted image, or None on failure/skip.
+    """
+    cfg = get_settings()
+    # Resolve image path (same logic as _load_image_b64)
+    path = cfg.IMAGE_STORE_DIR / record.camera_id / record.image_filename
+    if not path.exists():
+        path = Path(record.image_path)
+    if not path.exists():
+        return None
+
+    try:
+        return highlight_image_b64(path, query)
+    except Exception as exc:
+        logger.warning("Highlight failed for %s: %s — returning raw image", path, exc)
+        return None
 
 
 def _load_image_b64(record: AlertRecord) -> str:

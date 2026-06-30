@@ -36,8 +36,8 @@ logger = get_logger(__name__)
 def _generate_crops(
     img_w: int,
     img_h: int,
-    scales: Tuple[float, ...] = (0.25, 0.35, 0.50),
-    stride_ratio: float = 0.40,
+    scales: Tuple[float, ...] = (0.10, 0.15, 0.20),
+    stride_ratio: float = 0.25,
 ) -> List[Tuple[int, int, int, int]]:
     """
     Generate (x1, y1, x2, y2) crop boxes at several scales.
@@ -49,7 +49,7 @@ def _generate_crops(
     min_dim = min(img_w, img_h)
 
     for scale in scales:
-        crop_size = max(int(min_dim * scale), 64)
+        crop_size = max(int(min_dim * scale), 32)
         stride = max(int(crop_size * stride_ratio), 16)
 
         for y in range(0, img_h - crop_size + 1, stride):
@@ -110,36 +110,57 @@ def _score_crops(
 
 # ── Drawing ──────────────────────────────────────────────────────────────────
 
-def _draw_highlight(
+def _nms(boxes: List[Tuple[int, int, int, int]], scores: List[float], iou_threshold: float = 0.2) -> List[int]:
+    """Non-maximum suppression to filter out overlapping boxes."""
+    if len(boxes) == 0:
+        return []
+
+    # Sort boxes by score in descending order
+    indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    keep = []
+
+    def get_iou(box1, box2):
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = area1 + area2 - intersection
+
+        return intersection / union if union > 0 else 0
+
+    while len(indices) > 0:
+        current_idx = indices.pop(0)
+        keep.append(current_idx)
+
+        # Filter out remaining boxes that have high overlap with current box
+        indices = [i for i in indices if get_iou(boxes[current_idx], boxes[i]) <= iou_threshold]
+
+    return keep
+
+
+def _draw_highlights(
     img: Image.Image,
-    box: Tuple[int, int, int, int],
+    boxes: List[Tuple[int, int, int, int]],
     color: Tuple[int, int, int] = (0, 255, 0),
     line_width: int = 3,
-    dim_background: bool = False,
 ) -> Image.Image:
     """
-    Draw a bright bounding box around *box* and optionally dim the rest
-    of the image so the highlighted region really pops.
+    Draw bright bounding boxes around all given *boxes*.
     """
     result = img.copy().convert("RGBA")
-    x1, y1, x2, y2 = box
-
-    if dim_background:
-        # Create a semi-transparent dark overlay for the whole image
-        overlay = Image.new("RGBA", result.size, (0, 0, 0, 100))
-        # Cut a transparent hole where the highlight is
-        mask = Image.new("L", result.size, 255)
-        mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rectangle([x1, y1, x2, y2], fill=0)
-        overlay.putalpha(mask)
-        result = Image.alpha_composite(result, overlay)
-
     draw = ImageDraw.Draw(result)
-    for offset in range(line_width):
-        draw.rectangle(
-            [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
-            outline=(*color, 255),
-        )
+    
+    for box in boxes:
+        x1, y1, x2, y2 = box
+        for offset in range(line_width):
+            draw.rectangle(
+                [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
+                outline=(*color, 255),
+            )
 
     return result.convert("RGB")
 
@@ -149,7 +170,7 @@ def _draw_highlight(
 def highlight_image(
     image_path: Path | str,
     query_text: str,
-    min_score_threshold: float = 0.18,
+    min_score_threshold: float = 0.15,
 ) -> Optional[Image.Image]:
     """
     Open *image_path*, find the region that best matches *query_text*,
@@ -180,20 +201,30 @@ def highlight_image(
 
     best_idx = max(range(len(scores)), key=lambda i: scores[i])
     best_score = scores[best_idx]
-    best_box = boxes[best_idx]
+    
+    # Adaptive threshold: keep boxes that score at least 90% as well as the best box,
+    # but never below a hard baseline of 0.20 to avoid matching background.
+    adaptive_threshold = max(best_score * 0.90, 0.20)
+    
+    valid_indices = [i for i, s in enumerate(scores) if s >= adaptive_threshold]
+    
+    if not valid_indices:
+        logger.info("highlight: best score (%.4f) below baseline threshold — no highlight", best_score)
+        return None
+        
+    valid_boxes = [boxes[i] for i in valid_indices]
+    valid_scores = [scores[i] for i in valid_indices]
+    
+    keep_indices = _nms(valid_boxes, valid_scores, iou_threshold=0.2)
+    final_boxes = [valid_boxes[i] for i in keep_indices]
 
     logger.info(
-        "highlight: best crop score=%.4f box=%s (threshold=%.2f)",
-        best_score,
-        best_box,
+        "highlight: found %d boxes above threshold after NMS (threshold=%.2f)",
+        len(final_boxes),
         min_score_threshold,
     )
 
-    if best_score < min_score_threshold:
-        logger.info("highlight: best score below threshold — no highlight")
-        return None
-
-    return _draw_highlight(img, best_box)
+    return _draw_highlights(img, final_boxes)
 
 
 def highlight_image_b64(
